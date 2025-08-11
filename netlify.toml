@@ -1,4 +1,7 @@
 [build]
-  command = "npm run build" # Jika ada build step
-  publish = "public"       # Folder static files
+  command = "echo 'Skipping build'"
+  publish = "public"
   functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "18"
