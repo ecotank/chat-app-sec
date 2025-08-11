@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Room Chat</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h2>Room ID: <span id="currentRoomId"></span></h2>
+            <button id="leaveRoom">Keluar & Hapus Room</button>
+        </div>
+        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-input">
+            <input type="text" id="messageInput" placeholder="Ketik pesan...">
+            <button id="sendMessage">Kirim</button>
+        </div>
+    </div>
+    <script src="crypto.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
