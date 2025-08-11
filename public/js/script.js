@@ -1,170 +1,215 @@
-// Fungsi untuk menghasilkan ID room acak
+// ======================
+// CONSTANTS & STATE
+// ======================
+const APP_STORAGE_KEY = 'chatAppData';
+let currentRoom = null;
+let secretKey = null;
+
+// ======================
+// UTILITY FUNCTIONS
+// ======================
 function generateRoomId() {
-    return 'room-' + Math.random().toString(36).substr(2, 9);
+    const crypto = window.crypto || window.msCrypto;
+    const array = new Uint32Array(1);
+    crypto.getRandomValues(array);
+    return `room-${array[0].toString(36).slice(-8)}`;
 }
 
-// Fungsi untuk mengenkripsi pesan
-async function encryptMessage(message, secretKey) {
-    // Implementasi enkripsi menggunakan Web Crypto API
-    // Lihat detail di crypto.js
-    return await window.encryptData(message, secretKey);
+async function deriveSecretKey(roomId) {
+    const encoder = new TextEncoder();
+    const keyMaterial = await window.crypto.subtle.importKey(
+        'raw',
+        encoder.encode(roomId),
+        { name: 'PBKDF2' },
+        false,
+        ['deriveKey']
+    );
+    
+    return window.crypto.subtle.deriveKey(
+        {
+            name: 'PBKDF2',
+            salt: encoder.encode('secure-salt'),
+            iterations: 100000,
+            hash: 'SHA-256'
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+    );
 }
 
-// Fungsi untuk mendekripsi pesan
-async function decryptMessage(encryptedMessage, secretKey) {
-    // Implementasi dekripsi menggunakan Web Crypto API
-    return await window.decryptData(encryptedMessage, secretKey);
+// ======================
+// CORE FUNCTIONS
+// ======================
+async function initRoom() {
+    const savedData = JSON.parse(localStorage.getItem(APP_STORAGE_KEY)) || {};
+    
+    if (savedData.currentRoomId) {
+        currentRoom = savedData.currentRoomId;
+        secretKey = await deriveSecretKey(currentRoom);
+        return true;
+    }
+    return false;
 }
 
-// Fungsi utama ketika halaman dimuat
-document.addEventListener('DOMContentLoaded', function() {
-    // Logika untuk halaman utama
-    if (document.getElementById('joinRoom')) {
-        const joinBtn = document.getElementById('joinRoom');
-        const createBtn = document.getElementById('createRoom');
-        const roomIdInput = document.getElementById('roomId');
-        
-        joinBtn.addEventListener('click', function() {
-            const roomId = roomIdInput.value.trim();
-            if (roomId) {
-                // Simpan roomId di sessionStorage
-                sessionStorage.setItem('currentRoomId', roomId);
-                // Generate secret key dari roomId (bisa diimprove)
-                sessionStorage.setItem('secretKey', roomId + '-secret');
-                window.location.href = 'room.html';
-            }
+async function setupRoom(roomId) {
+    currentRoom = roomId;
+    secretKey = await deriveSecretKey(roomId);
+    
+    localStorage.setItem(APP_STORAGE_KEY, JSON.stringify({
+        currentRoomId: roomId,
+        lastActive: Date.now()
+    }));
+}
+
+// ======================
+// MESSAGE HANDLING
+// ======================
+async function sendMessage(message) {
+    if (!currentRoom || !message.trim()) return;
+    
+    try {
+        const encrypted = await window.encryptData(message, secretKey);
+        const response = await fetch('/.netlify/functions/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'send',
+                roomId: currentRoom,
+                encryptedMsg: encrypted
+            })
+        });
+
+        if (!response.ok) throw new Error(await response.text());
+        return true;
+    } catch (error) {
+        console.error('Send failed:', error);
+        showError('Gagal mengirim pesan');
+        return false;
+    }
+}
+
+async function fetchMessages() {
+    if (!currentRoom) return [];
+    
+    try {
+        const response = await fetch('/.netlify/functions/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'get',
+                roomId: currentRoom
+            })
         });
         
-        createBtn.addEventListener('click', function() {
-            const newRoomId = generateRoomId();
-            roomIdInput.value = newRoomId;
-            // Auto-join ke room baru
-            joinBtn.click();
-        });
+        if (!response.ok) throw new Error(await response.text());
+        return await response.json();
+    } catch (error) {
+        console.error('Fetch failed:', error);
+        return [];
+    }
+}
+
+// ======================
+// UI FUNCTIONS
+// ======================
+function displayMessage(sender, content, encrypted) {
+    const messagesContainer = document.getElementById('chatMessages');
+    if (!messagesContainer) return;
+    
+    const messageEl = document.createElement('div');
+    messageEl.className = `message ${sender === 'You' ? 'sent' : 'received'}`;
+    messageEl.innerHTML = `
+        <div class="sender">${sender}</div>
+        <div class="content">${content}</div>
+        <div class="encrypted" title="Encrypted payload">
+            🔒 ${encrypted.substring(0, 30)}...
+        </div>
+    `;
+    
+    messagesContainer.appendChild(messageEl);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+function showError(message) {
+    const errorEl = document.createElement('div');
+    errorEl.className = 'error-message';
+    errorEl.textContent = message;
+    document.body.appendChild(errorEl);
+    setTimeout(() => errorEl.remove(), 5000);
+}
+
+// ======================
+// EVENT HANDLERS
+// ======================
+async function handleSend() {
+    const input = document.getElementById('messageInput');
+    if (!input || !input.value.trim()) return;
+    
+    const message = input.value;
+    input.value = '';
+    
+    if (await sendMessage(message)) {
+        displayMessage('You', message, await window.encryptData(message, secretKey));
+    }
+}
+
+async function handleRoomJoin() {
+    const input = document.getElementById('roomId');
+    if (!input || !input.value.trim()) {
+        showError('Masukkan Room ID');
+        return;
     }
     
-    // Logika untuk halaman chat room
+    await setupRoom(input.value.trim());
+    window.location.href = 'room.html';
+}
+
+function handleRoomCreate() {
+    const input = document.getElementById('roomId');
+    if (!input) return;
+    
+    input.value = generateRoomId();
+    handleRoomJoin();
+}
+
+// ======================
+// INITIALIZATION
+// ======================
+document.addEventListener('DOMContentLoaded', async () => {
+    // Home Page Logic
+    if (document.getElementById('joinRoom')) {
+        document.getElementById('joinRoom').addEventListener('click', handleRoomJoin);
+        document.getElementById('createRoom').addEventListener('click', handleRoomCreate);
+    }
+    
+    // Chat Room Logic
     if (document.getElementById('currentRoomId')) {
-        const roomId = sessionStorage.getItem('currentRoomId');
-        const secretKey = sessionStorage.getItem('secretKey');
-        document.getElementById('currentRoomId').textContent = roomId;
+        const isRoomReady = await initRoom();
+        if (!isRoomReady) {
+            window.location.href = 'index.html';
+            return;
+        }
         
-        // Simulasikan WebRTC atau WebSocket untuk komunikasi P2P
-        // Ini hanya simulasi - implementasi nyata membutuhkan signaling server
+        document.getElementById('currentRoomId').textContent = currentRoom;
+        document.getElementById('sendButton').addEventListener('click', handleSend);
         
-        // Event listener untuk kirim pesan
-        document.getElementById('sendMessage').addEventListener('click', async function() {
-            const messageInput = document.getElementById('messageInput');
-            const message = messageInput.value.trim();
-            
-            if (message) {
-                // Enkripsi pesan sebelum "dikirim"
-                const encryptedMessage = await encryptMessage(message, secretKey);
-                
-                // Simulasi pengiriman pesan
-                displayMessage('Anda', message, encryptedMessage);
-                
-                // Dalam implementasi nyata, kirim encryptedMessage ke peer lain
-                messageInput.value = '';
-            }
-        });
+        // Setup message polling
+        const poll = async () => {
+            const messages = await fetchMessages();
+            messages.forEach(async msg => {
+                const decrypted = await window.decryptData(msg.encrypted_message, secretKey);
+                displayMessage('Partner', decrypted, msg.encrypted_message);
+            });
+        };
         
-        // Event listener untuk keluar dari room
-        document.getElementById('leaveRoom').addEventListener('click', function() {
-            // Hapus data room dari sessionStorage
-            sessionStorage.removeItem('currentRoomId');
-            sessionStorage.removeItem('secretKey');
+        poll(); // Initial load
+        setInterval(poll, 2000); // Regular updates
+        
+        document.getElementById('leaveRoom').addEventListener('click', () => {
+            localStorage.removeItem(APP_STORAGE_KEY);
             window.location.href = 'index.html';
         });
     }
 });
-
-// Fungsi untuk menampilkan pesan
-async function displayMessage(sender, plainText, encryptedMessage) {
-    const chatMessages = document.getElementById('chatMessages');
-    const messageElement = document.createElement('div');
-    messageElement.className = 'message ' + (sender === 'Anda' ? 'sent' : 'received');
-    
-    // Tambahkan tooltip dan struktur bubble baru
-    messageElement.innerHTML = `
-        <div class="sender">${sender}</div>
-        <div class="text">${plainText}</div>
-        <div class="encrypted" title="Klik untuk melihat pesan">
-            🔒 ${truncateEncrypted(encryptedMessage)}
-        </div>
-    `;
-    
-    // Tambahkan event listener untuk klik (alternatif hover)
-    messageElement.addEventListener('click', function() {
-        this.classList.toggle('show-plaintext');
-    });
-    
-    chatMessages.appendChild(messageElement);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-// Fungsi untuk memotong teks enkripsi yang panjang
-function truncateEncrypted(text) {
-    return text.length > 50 ? text.substring(0, 50) + '...' : text;
-}
-
-// Tambahkan di script.js
-document.querySelectorAll('.message').forEach(msg => {
-    msg.addEventListener('click', function() {
-        this.classList.toggle('show-plaintext');
-    });
-});
-
-// Fungsi kirim pesan
-async function sendChatMessage() {
-  const messageInput = document.getElementById('messageInput');
-  const message = messageInput.value.trim();
-
-  if (!message) return;
-
-  try {
-    const response = await fetch('/.netlify/functions/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        action: 'send',
-        roomId: localStorage.getItem('currentRoomId'),
-        encryptedMsg: await encryptMessage(message, secretKey)
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-
-    messageInput.value = '';
-  } catch (error) {
-    console.error('Failed to send message:', error);
-    alert('Failed to send: ' + error.message);
-  }
-}
-
-// Event listener untuk tombol kirim
-document.getElementById('sendButton').addEventListener('click', sendChatMessage);
-
-// Fungsi polling untuk update real-time
-async function pollMessages() {
-  const response = await fetch('/.netlify/functions/chat', {
-    method: 'POST',
-    body: JSON.stringify({
-      action: 'get',
-      roomId: localStorage.getItem('currentRoomId')
-    })
-  });
-  
-  const messages = await response.json();
-  messages.forEach(async msg => {
-    const plainText = await decryptMessage(msg.encrypted_message, secretKey);
-    displayMessage('Partner', plainText, msg.encrypted_message);
-  });
-}
-
-// Poll setiap 2 detik
-setInterval(pollMessages, 2000); 

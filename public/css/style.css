@@ -188,3 +188,12 @@ button:hover {
 .message {
     animation: messageIn 0.3s ease-out;
 }
+
+.message { margin: 10px; padding: 12px; border-radius: 8px; max-width: 70%; }
+.sent { background: #e3f2fd; margin-left: auto; }
+.received { background: #f1f1f1; margin-right: auto; }
+.error-message { 
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #ffebee; color: #c62828; padding: 10px 20px; 
+    border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
