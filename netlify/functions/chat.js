@@ -1,28 +1,46 @@
 const { Pool } = require('pg');
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL, // Dari env Netlify
-  ssl: { rejectUnauthorized: false }
-});
 
 exports.handler = async (event) => {
-  const { roomId, message, action } = JSON.parse(event.body);
+  // 1. Validasi request
+  if (!event.body) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: "Request body is empty" })
+    };
+  }
 
-  switch (action) {
-    case 'send':
-      await pool.query(
-        'INSERT INTO chats (room_id, encrypted_message) VALUES ($1, $2)',
-        [roomId, message]
-      );
-      return { statusCode: 200, body: 'OK' };
+  let data;
+  try {
+    // 2. Parse JSON dengan error handling
+    data = JSON.parse(event.body);
+  } catch (err) {
+    return {
+      statusCode: 400,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: "Invalid JSON format" })
+    };
+  }
 
-    case 'get':
-      const res = await pool.query(
-        'SELECT * FROM chats WHERE room_id = $1 ORDER BY created_at DESC LIMIT 100',
-        [roomId]
-      );
-      return { statusCode: 200, body: JSON.stringify(res.rows) };
+  // 3. Validasi field wajib
+  if (!data.roomId || !data.action) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: "Missing required fields" })
+    };
+  }
 
-    default:
-      return { statusCode: 400, body: 'Invalid action' };
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+
+  try {
+    // Logika fungsi...
+  } catch (err) {
+    console.error('Database error:', err);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: "Internal server error" })
+    };
   }
 };

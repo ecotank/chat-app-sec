@@ -117,17 +117,26 @@ document.querySelectorAll('.message').forEach(msg => {
 
 // Fungsi kirim pesan
 async function sendMessage() {
-  const message = document.getElementById('messageInput').value;
-  const encrypted = await encryptMessage(message, secretKey);
-  
-  await fetch('/.netlify/functions/chat', {
+  const response = await fetch('/.netlify/functions/chat', {
     method: 'POST',
+    headers: {
+      'Content-Type': 'application/json' // ← Ini wajib!
+    },
     body: JSON.stringify({
       action: 'send',
-      roomId: localStorage.getItem('currentRoomId'),
-      message: encrypted
+      roomId: 'room-123',
+      encryptedMsg: 'encrypted-data-here'
     })
   });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    console.error('Error:', error);
+    return;
+  }
+  
+  const data = await response.json();
+  console.log('Success:', data);
 }
 
 // Fungsi polling untuk update real-time
@@ -148,4 +157,4 @@ async function pollMessages() {
 }
 
 // Poll setiap 2 detik
-setInterval(pollMessages, 2000);
+setInterval(pollMessages, 2000); 
