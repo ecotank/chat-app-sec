@@ -1,7 +1,7 @@
 [build]
-  command = "echo 'Skipping build'"
+  command = "npm install && npm run build"
   publish = "public"
   functions = "netlify/functions"
 
 [build.environment]
-  NODE_VERSION = "18"
+  NODE_VERSION = "18"  # Sesuaikan dengan versi yang dibutuhkan

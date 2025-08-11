@@ -1,7 +1,7 @@
 {
   "name": "my-chat-app",
   "version": "1.0.0",
-  "scripts": {
-    "build": "echo 'Build not required' && exit 0"
+  "dependencies": {
+    "pg": "^8.16.3"
   }
 }
