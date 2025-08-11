@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="id">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Room Chat</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
+
 <body>
     <div class="chat-container">
         <div class="chat-header">
@@ -17,8 +19,18 @@
             <input type="text" id="messageInput" placeholder="Ketik pesan...">
             <button id="sendMessage">Kirim</button>
         </div>
+        <div id="errorAlert" style="display:none; color:red;"></div>
     </div>
     <script src="js/crypto.js"></script>
+    <script>
+        function showError(message) {
+            const alertDiv = document.getElementById('errorAlert');
+            alertDiv.textContent = message;
+            alertDiv.style.display = 'block';
+            setTimeout(() => alertDiv.style.display = 'none', 5000);
+        }
+    </script>
     <script src="js/script.js"></script>
 </body>
+
 </html>

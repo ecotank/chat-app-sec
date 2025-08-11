@@ -1,34 +1,51 @@
 const { Pool } = require('pg');
 
 exports.handler = async (event) => {
-  // 1. Validasi request
+  // Debugging: Log seluruh event
+  console.log('Incoming event:', JSON.stringify(event, null, 2));
+
+  // Handle preflight OPTIONS request
+  if (event.httpMethod === 'OPTIONS') {
+    return {
+      statusCode: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS'
+      },
+      body: ''
+    };
+  }
+
+  // Validasi method
+  if (event.httpMethod !== 'POST') {
+    return {
+      statusCode: 405,
+      body: JSON.stringify({ error: 'Method not allowed' })
+    };
+  }
+
+  // Validasi body
   if (!event.body) {
     return {
       statusCode: 400,
-      body: JSON.stringify({ error: "Request body is empty" })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'Request body is empty' })
     };
   }
 
   let data;
   try {
-    // 2. Parse JSON dengan error handling
     data = JSON.parse(event.body);
   } catch (err) {
     return {
       statusCode: 400,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: "Invalid JSON format" })
+      body: JSON.stringify({ error: 'Invalid JSON format' })
     };
   }
 
-  // 3. Validasi field wajib
-  if (!data.roomId || !data.action) {
-    return {
-      statusCode: 400,
-      body: JSON.stringify({ error: "Missing required fields" })
-    };
-  }
-
+  // ... sisa kode database ...
+  
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }

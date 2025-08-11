@@ -116,28 +116,38 @@ document.querySelectorAll('.message').forEach(msg => {
 });
 
 // Fungsi kirim pesan
-async function sendMessage() {
-  const response = await fetch('/.netlify/functions/chat', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json' // ← Ini wajib!
-    },
-    body: JSON.stringify({
-      action: 'send',
-      roomId: 'room-123',
-      encryptedMsg: 'encrypted-data-here'
-    })
-  });
-  
-  if (!response.ok) {
-    const error = await response.json();
-    console.error('Error:', error);
-    return;
+async function sendChatMessage() {
+  const messageInput = document.getElementById('messageInput');
+  const message = messageInput.value.trim();
+
+  if (!message) return;
+
+  try {
+    const response = await fetch('/.netlify/functions/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'send',
+        roomId: localStorage.getItem('currentRoomId'),
+        encryptedMsg: await encryptMessage(message, secretKey)
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+
+    messageInput.value = '';
+  } catch (error) {
+    console.error('Failed to send message:', error);
+    alert('Failed to send: ' + error.message);
   }
-  
-  const data = await response.json();
-  console.log('Success:', data);
 }
+
+// Event listener untuk tombol kirim
+document.getElementById('sendButton').addEventListener('click', sendChatMessage);
 
 // Fungsi polling untuk update real-time
 async function pollMessages() {
