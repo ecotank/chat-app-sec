@@ -1,7 +1,7 @@
 const { Pool } = require('pg');
 
 exports.handler = async (event) => {
-  // 1. Handle OPTIONS request (CORS Preflight)
+  // Handle OPTIONS (CORS Preflight)
   if (event.httpMethod === 'OPTIONS') {
     return {
       statusCode: 200,
@@ -14,12 +14,18 @@ exports.handler = async (event) => {
     };
   }
 
-  // 2. Validate HTTP Method
+  // Hanya izinkan POST
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'Method not allowed' })
+      headers: {
+        'Content-Type': 'application/json',
+        'Allow': 'POST, OPTIONS'
+      },
+      body: JSON.stringify({ 
+        error: 'Method not allowed',
+        allowed_methods: ['POST'] 
+      })
     };
   }
 

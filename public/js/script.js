@@ -66,28 +66,29 @@ async function setupRoom(roomId) {
 // ======================
 // MESSAGE HANDLING
 // ======================
-async function sendMessage(message) {
-    if (!currentRoom || !message.trim()) return;
-    
-    try {
-        const encrypted = await window.encryptData(message, secretKey);
-        const response = await fetch('/.netlify/functions/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                action: 'send',
-                roomId: currentRoom,
-                encryptedMsg: encrypted
-            })
-        });
+async function sendMessage() {
+  try {
+    const response = await fetch('/.netlify/functions/chat', {
+      method: 'POST', // ← PASTIKAN METHOD POST
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        action: 'send',
+        roomId: 'your-room-id',
+        encryptedMsg: 'your-encrypted-data'
+      })
+    });
 
-        if (!response.ok) throw new Error(await response.text());
-        return true;
-    } catch (error) {
-        console.error('Send failed:', error);
-        showError('Gagal mengirim pesan');
-        return false;
+    if (!response.ok) {
+      throw new Error(await response.text());
     }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Failed to send:', error);
+    showError('Gagal mengirim pesan');
+  }
 }
 
 async function fetchMessages() {
