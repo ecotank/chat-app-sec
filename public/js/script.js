@@ -5,6 +5,24 @@ const APP_STORAGE_KEY = 'chatAppData';
 let currentRoom = null;
 let secretKey = null;
 
+
+// Di bagian atas script.js
+const currentPage = document.body.id || 'index'; // Tambahkan id body di HTML
+
+if (currentPage === 'chat-page') {
+  initChatPage();
+} else {
+  initHomePage();
+}
+
+function initChatPage() {
+  if (!document.getElementById('sendButton')) {
+    console.error('Elemen chat tidak ditemukan!');
+    return;
+  }
+  initEventListeners();
+  pollMessages();
+}
 // ======================
 // UTILITY FUNCTIONS
 // ======================
@@ -194,7 +212,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         
         document.getElementById('currentRoomId').textContent = currentRoom;
-        document.getElementById('sendButton').addEventListener('click', handleSend);
+
+        function initEventListeners() {
+  const sendButton = document.getElementById('sendButton');
+  const messageInput = document.getElementById('messageInput');
+  
+  if (sendButton && messageInput) {
+    sendButton.addEventListener('click', sendChatMessage);
+    messageInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendChatMessage();
+    });
+  } else {
+    console.warn('Elemen tidak ditemukan! Pastikan ID benar dan halaman sudah load');
+  }
+}
+
+// Panggil setelah DOM siap
+document.addEventListener('DOMContentLoaded', initEventListeners);
         
         // Setup message polling
         const poll = async () => {
