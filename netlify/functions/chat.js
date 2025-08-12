@@ -69,11 +69,11 @@ exports.handler = async (event) => {
         }
 
         const { rows } = await pool.query(
-          `INSERT INTO chats (room_id, message) 
-           VALUES ($1, $2) 
-           RETURNING id, created_at`,
-          [payload.roomId, payload.encryptedMsg]
-        );
+  `INSERT INTO chats (room_id, message, custom_id) 
+   VALUES ($1, $2, $3) 
+   RETURNING id, custom_id`,
+  [payload.roomId, payload.encryptedMsg, payload.messageId || null]
+);
 
         return {
           statusCode: 200,
@@ -85,13 +85,13 @@ exports.handler = async (event) => {
 
       case 'get':
         const { rows: messages } = await pool.query(
-          `SELECT id, message as encrypted_message, created_at 
-           FROM chats 
-           WHERE room_id = $1 
-           ORDER BY created_at DESC 
-           LIMIT 100`,
-          [payload.roomId]
-        );
+  `SELECT id, message as encrypted_message, custom_id 
+   FROM chats 
+   WHERE room_id = $1 
+   ORDER BY created_at DESC 
+   LIMIT 100`,
+  [payload.roomId]
+);
 
         return {
           statusCode: 200,

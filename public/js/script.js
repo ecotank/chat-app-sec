@@ -101,27 +101,39 @@ async function sendMessage() {
   if (!message || !state.currentRoom) return;
 
   try {
+    // 1. Enkripsi pesan dan buat ID unik
     const encrypted = await window.encryptData(message, state.secretKey);
+    const messageId = Date.now(); // ID unik berbasis timestamp
+
+    // 2. Tampilkan pesan langsung di UI sebagai pengirim "Anda"
+    displayMessage('Anda', message, encrypted, messageId);
+
+    // 3. Kirim ke server
     const response = await fetch(`${APP_CONFIG.apiBase}/.netlify/functions/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         action: 'send',
         roomId: state.currentRoom,
-        encryptedMsg: encrypted
+        encryptedMsg: encrypted,
+        messageId: messageId // Sertakan ID unik
       })
     });
 
     if (!response.ok) {
+      // Jika gagal, hapus pesan dari UI
+      document.querySelector(`[data-message-id="${messageId}"]`)?.remove();
       throw new Error(await response.text());
     }
 
     input.value = '';
-    displayMessage('Anda', message, encrypted);
 
   } catch (error) {
     console.error('Gagal mengirim pesan:', error);
     showError('Gagal mengirim pesan: ' + error.message);
+    
+    // Restore input jika error
+    input.value = message;
   }
 }
 
@@ -178,37 +190,30 @@ function setupEventListeners() {
 function startPolling() {
   const processMessages = async () => {
     const messages = await fetchMessages();
-    messages.forEach(async msg => {
-      if (!document.querySelector(`[data-message-id="${msg.id}"]`)) {
-        const decrypted = await window.decryptData(msg.encrypted_message, state.secretKey);
-        displayMessage('Partner', decrypted, msg.encrypted_message, msg.id);
-      }
-    });
+    messages.forEach(msg => {
+  if (!document.querySelector(`[data-message-id="${msg.custom_id}"]`)) {
+    displayMessage('Partner', msg.decryptedText, msg.encrypted, msg.custom_id);
+  }
+});
     setTimeout(processMessages, APP_CONFIG.pollInterval);
   };
   processMessages();
 }
 
-function displayMessage(sender, content, encrypted, id) {
+function displayMessage(sender, content, encrypted, messageId) {
   const container = document.getElementById('chatMessages');
-  if (!container) return;
-
-  const messageId = id || Date.now();
+  if (!container || document.querySelector(`[data-message-id="${messageId}"]`)) return;
   
-  if (!document.querySelector(`[data-message-id="${messageId}"]`)) {
-    const messageEl = document.createElement('div');
-    messageEl.className = `message ${sender === 'Anda' ? 'sent' : 'received'}`;
-    messageEl.dataset.messageId = messageId;
-    messageEl.innerHTML = `
-      <div class="sender">${sender}</div>
-      <div class="text">${content}</div>
-      <div class="encrypted" title="Pesan terenkripsi">
-        🔒 ${encrypted.substring(0, 30)}...
-      </div>
-    `;
-    container.appendChild(messageEl);
-    container.scrollTop = container.scrollHeight;
-  }
+  const messageEl = document.createElement('div');
+  messageEl.dataset.messageId = messageId;
+  messageEl.className = `message ${sender === 'Anda' ? 'sent' : 'received'}`;
+  messageEl.innerHTML = `
+    <div class="sender">${sender}</div>
+    <div class="text">${content}</div>
+    <div class="encrypted">🔒 ${encrypted.substring(0, 20)}...</div>
+  `;
+  container.appendChild(messageEl);
+  container.scrollTop = container.scrollHeight;
 }
 
 function generateRoomId() {
