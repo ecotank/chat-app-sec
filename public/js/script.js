@@ -101,39 +101,55 @@ async function sendMessage() {
   const input = document.getElementById('messageInput');
   const message = input.value.trim();
   
-  if (!message || !state.currentRoom) return;
+  if (!message || !state.currentRoom) {
+    showError('Pesan atau room ID tidak valid');
+    return;
+  }
 
   try {
     const encrypted = await window.encryptData(message, state.secretKey);
     const tempId = `temp-${Date.now()}`;
 
-    // Tampilkan hanya sebagai pesan keluar
+    // Tampilkan pesan sebagai outgoing
     displayMessage('Anda', message, encrypted, tempId);
     input.value = '';
     pendingMessages.add(tempId);
 
+    // Data yang akan dikirim ke server
+    const postData = {
+      action: 'send',
+      roomId: state.currentRoom,
+      message: encrypted, // Gunakan key 'message' bukan 'encryptedMsg'
+      custom_id: tempId,
+      sender: 'user',
+      timestamp: new Date().toISOString() // Tambahkan timestamp
+    };
+
+    console.log('Mengirim data:', postData); // Debug log
+
     const response = await fetch(`${APP_CONFIG.apiBase}/.netlify/functions/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'send',
-        roomId: state.currentRoom,
-        encryptedMsg: encrypted,
-        custom_id: tempId,
-        sender: 'user' // Identifikasi pengirim
-      })
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-Request-Id': tempId // Header untuk tracking
+      },
+      body: JSON.stringify(postData)
     });
 
-    if (!response.ok) throw new Error(await response.text());
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Gagal mengirim pesan');
+    }
 
-    const { messageId } = await response.json();
-    updateMessageId(tempId, messageId);
+    const result = await response.json();
+    console.log('Response server:', result); // Debug log
+    updateMessageId(tempId, result.messageId);
 
   } catch (error) {
-    console.error('Send failed:', error);
-    showError('Gagal mengirim: ' + error.message);
+    console.error('Error detail:', error);
+    showError(error.message);
     removePendingMessage(tempId);
-    input.value = message;
+    input.value = message; // Kembalikan pesan ke input
   }
 }
 
