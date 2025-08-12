@@ -32,7 +32,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ======================
-// FUNGSI UTAMA
+// FUNGSI UTAMA// Pastikan fungsi enkripsi/dekripsi tersedia
+if (!window.encryptData || !window.decryptData) {
+  showError('Fungsi enkripsi tidak tersedia');
+  disableChatInput();
+}
+
+function disableChatInput() {
+  const input = document.getElementById('messageInput');
+  const button = document.getElementById('sendButton');
+  if (input) input.disabled = true;
+  if (button) button.disabled = true;
+}
 // ======================
 async function initChatPage() {
   try {
@@ -101,59 +112,76 @@ async function sendMessage() {
   const input = document.getElementById('messageInput');
   const message = input.value.trim();
   
-  if (!message || !state.currentRoom) {
-    showError('Pesan atau room ID tidak valid');
+  if (!message) {
+    showError('Pesan tidak boleh kosong');
     return;
   }
 
+  if (!state.currentRoom) {
+    showError('Room ID tidak valid');
+    return;
+  }
+
+  // Definisikan tempId di awal fungsi
+  const tempId = `temp-${Date.now()}`;
+  let shouldRestoreMessage = true;
+
   try {
     const encrypted = await window.encryptData(message, state.secretKey);
-    const tempId = `temp-${Date.now()}`;
-
+    
     // Tampilkan pesan sebagai outgoing
     displayMessage('Anda', message, encrypted, tempId);
     input.value = '';
     pendingMessages.add(tempId);
+    shouldRestoreMessage = false; // Jangan restore jika sudah berhasil sampai sini
 
-    // Data yang akan dikirim ke server
+    // Data yang akan dikirim
     const postData = {
       action: 'send',
       roomId: state.currentRoom,
-      message: encrypted, // Gunakan key 'message' bukan 'encryptedMsg'
-      custom_id: tempId,
+      message: encrypted, // Pastikan key ini sesuai dengan yang diharapkan server
+      messageId: tempId, // Beberapa server mengharapkan key messageId
       sender: 'user',
-      timestamp: new Date().toISOString() // Tambahkan timestamp
+      timestamp: Date.now()
     };
-
-    console.log('Mengirim data:', postData); // Debug log
 
     const response = await fetch(`${APP_CONFIG.apiBase}/.netlify/functions/chat`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'X-Request-Id': tempId // Header untuk tracking
+        'X-Request-ID': tempId
       },
       body: JSON.stringify(postData)
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'Gagal mengirim pesan');
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
     }
 
     const result = await response.json();
-    console.log('Response server:', result); // Debug log
-    updateMessageId(tempId, result.messageId);
+    updateMessageId(tempId, result.messageId || tempId);
+    shouldRestoreMessage = false;
 
   } catch (error) {
-    console.error('Error detail:', error);
-    showError(error.message);
-    removePendingMessage(tempId);
-    input.value = message; // Kembalikan pesan ke input
+    console.error('Send error:', error);
+    
+    // Gunakan tempId yang sudah didefinisikan di awal
+    if (tempId) {
+      removePendingMessage(tempId);
+    }
+    
+    showError(error.message || 'Gagal mengirim pesan');
+    
+    if (shouldRestoreMessage && message) {
+      input.value = message;
+    }
   }
 }
 
 function updateMessageId(tempId, newId) {
+  if (!tempId || !newId) return;
+  
   const msgElement = document.querySelector(`[data-message-id="${tempId}"]`);
   if (msgElement) {
     msgElement.dataset.messageId = newId;
@@ -163,7 +191,12 @@ function updateMessageId(tempId, newId) {
 }
 
 function removePendingMessage(tempId) {
-  document.querySelector(`[data-message-id="${tempId}"]`)?.remove();
+  if (!tempId) return;
+  
+  const messageElement = document.querySelector(`[data-message-id="${tempId}"]`);
+  if (messageElement) {
+    messageElement.remove();
+  }
   pendingMessages.delete(tempId);
 }
 
