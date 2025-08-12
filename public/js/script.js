@@ -118,11 +118,14 @@ async function sendMessage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        action: 'send',
-        roomId: state.currentRoom,
-        encryptedMsg: encrypted,
-        custom_id: tempId // Kirim custom_id ke server
+  action: 'send',
+  roomId: state.currentRoom,
+  encryptedMsg: encrypted,
+  custom_id: tempId,
+  sender: 'user' // Tambahkan identifikasi pengirim
       })
+
+      
     });
 
     if (!response.ok) throw new Error(await response.text());
@@ -218,21 +221,22 @@ async function processMessages(processedMessageIds) {
       // 2. Tidak ada ID
       // 3. Merupakan pesan pending dari pengirim (cek via custom_id)
       if (processedMessageIds.has(msg.id) || 
-          !msg.id ||
-          (msg.custom_id && pendingMessages.has(msg.custom_id))) {
-        continue;
-      }
+        !msg.id ||
+        msg.sender === 'user') {  // Skip pesan dari diri sendiri
+      continue;
+    }
 
       const decryptedText = await window.decryptData(msg.encrypted_message, state.secretKey);
-      displayMessage(
-        'Partner', 
-        decryptedText,
-        msg.encrypted_message,
-        msg.id
-      );
-      
-      processedMessageIds.add(msg.id);
-    }
+    displayMessage(
+      'Partner', 
+      decryptedText,
+      msg.encrypted_message,
+      msg.id
+    );
+    
+    processedMessageIds.add(msg.id);
+  }
+
   } catch (error) {
     console.error('Polling error:', error);
   } finally {
@@ -247,11 +251,11 @@ function startPolling() {
 
 function displayMessage(sender, content, encrypted, messageId, isSender = false) {
   const container = document.getElementById('chatMessages');
-  // Skip jika pesan sudah ada DAN bukan dari pengirim (pending)
-  if (!container || (document.querySelector(`[data-message-id="${messageId}"]`) && !isSender)) return;
+  // Skip jika pesan sudah ada
+  if (!container || document.querySelector(`[data-message-id="${messageId}"]`)) return;
 
   const messageEl = document.createElement('div');
-  messageEl.className = `message ${sender === 'Anda' ? 'sent' : 'received'} ${isSender ? 'pending' : ''}`;
+  messageEl.className = `message ${sender === 'Anda' ? 'sent' : 'received'}`;
   messageEl.dataset.messageId = messageId;
   messageEl.innerHTML = `
     <div class="sender">${sender}</div>
