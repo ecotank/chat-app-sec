@@ -108,8 +108,8 @@ async function sendMessage() {
     const encrypted = await window.encryptData(message, state.secretKey);
     const tempId = `temp-${Date.now()}`; // ID sementara
 
-    // 2. Tampilkan pesan sebagai "pending"
-    displayMessage('Anda', message, encrypted, tempId);
+    // 2. Tampilkan pesan sebagai "pending" dengan flag isSender: true
+    displayMessage('Anda', message, encrypted, tempId, true);
     input.value = '';
     pendingMessages.add(tempId);
 
@@ -120,7 +120,8 @@ async function sendMessage() {
       body: JSON.stringify({
         action: 'send',
         roomId: state.currentRoom,
-        encryptedMsg: encrypted
+        encryptedMsg: encrypted,
+        custom_id: tempId // Kirim custom_id ke server
       })
     });
 
@@ -138,11 +139,11 @@ async function sendMessage() {
   }
 }
 
-// Fungsi bantuan baru
 function updateMessageId(tempId, newId) {
   const msgElement = document.querySelector(`[data-message-id="${tempId}"]`);
   if (msgElement) {
     msgElement.dataset.messageId = newId;
+    msgElement.classList.remove('pending');
     pendingMessages.delete(tempId);
   }
 }
@@ -212,6 +213,10 @@ async function processMessages(processedMessageIds) {
     const messages = await fetchMessages();
     
     for (const msg of messages) {
+      // Skip jika:
+      // 1. Sudah diproses
+      // 2. Tidak ada ID
+      // 3. Merupakan pesan pending dari pengirim (cek via custom_id)
       if (processedMessageIds.has(msg.id) || 
           !msg.id ||
           (msg.custom_id && pendingMessages.has(msg.custom_id))) {
@@ -240,12 +245,13 @@ function startPolling() {
   processMessages(processedMessageIds); // Start the polling loop
 }
 
-function displayMessage(sender, content, encrypted, messageId, isPending = false) {
+function displayMessage(sender, content, encrypted, messageId, isSender = false) {
   const container = document.getElementById('chatMessages');
-  if (!container || document.querySelector(`[data-message-id="${messageId}"]`)) return;
+  // Skip jika pesan sudah ada DAN bukan dari pengirim (pending)
+  if (!container || (document.querySelector(`[data-message-id="${messageId}"]`) && !isSender)) return;
 
   const messageEl = document.createElement('div');
-  messageEl.className = `message ${sender === 'Anda' ? 'sent' : 'received'} ${isPending ? 'pending' : ''}`;
+  messageEl.className = `message ${sender === 'Anda' ? 'sent' : 'received'} ${isSender ? 'pending' : ''}`;
   messageEl.dataset.messageId = messageId;
   messageEl.innerHTML = `
     <div class="sender">${sender}</div>
