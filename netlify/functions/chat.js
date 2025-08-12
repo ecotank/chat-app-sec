@@ -45,11 +45,17 @@ exports.handler = async (event) => {
   }
 
   // Initialize database
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-    idleTimeoutMillis: 5000
-  });
+ const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false,
+    // Untuk development lokal, tambahkan:
+    ca: process.env.NODE_ENV === 'development' 
+      ? require('fs').readFileSync('./path/to/neon-cert.pem').toString()
+      : undefined
+  },
+  connectionTimeoutMillis: 5000
+});
 
   try {
     // Process actions
