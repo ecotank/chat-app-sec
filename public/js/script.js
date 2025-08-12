@@ -104,33 +104,28 @@ async function sendMessage() {
   if (!message || !state.currentRoom) return;
 
   try {
-    // 1. Enkripsi dan siapkan data
     const encrypted = await window.encryptData(message, state.secretKey);
-    const tempId = `temp-${Date.now()}`; // ID sementara
+    const tempId = `temp-${Date.now()}`;
 
-    // 2. Tampilkan pesan sebagai "pending" dengan flag isSender: true
-    displayMessage('Anda', message, encrypted, tempId, true);
+    // Tampilkan hanya sebagai pesan keluar
+    displayMessage('Anda', message, encrypted, tempId);
     input.value = '';
     pendingMessages.add(tempId);
 
-    // 3. Kirim ke server
     const response = await fetch(`${APP_CONFIG.apiBase}/.netlify/functions/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-  action: 'send',
-  roomId: state.currentRoom,
-  encryptedMsg: encrypted,
-  custom_id: tempId,
-  sender: 'user' // Tambahkan identifikasi pengirim
+        action: 'send',
+        roomId: state.currentRoom,
+        encryptedMsg: encrypted,
+        custom_id: tempId,
+        sender: 'user' // Identifikasi pengirim
       })
-
-      
     });
 
     if (!response.ok) throw new Error(await response.text());
 
-    // 4. Jika sukses, update status pesan
     const { messageId } = await response.json();
     updateMessageId(tempId, messageId);
 
@@ -138,7 +133,7 @@ async function sendMessage() {
     console.error('Send failed:', error);
     showError('Gagal mengirim: ' + error.message);
     removePendingMessage(tempId);
-    input.value = message; // Kembalikan text ke input
+    input.value = message;
   }
 }
 
@@ -219,24 +214,23 @@ async function processMessages(processedMessageIds) {
       // Skip jika:
       // 1. Sudah diproses
       // 2. Tidak ada ID
-      // 3. Merupakan pesan pending dari pengirim (cek via custom_id)
+      // 3. Dari pengguna sendiri
       if (processedMessageIds.has(msg.id) || 
-        !msg.id ||
-        msg.sender === 'user') {  // Skip pesan dari diri sendiri
-      continue;
-    }
+          !msg.id ||
+          msg.sender === 'user') {
+        continue;
+      }
 
       const decryptedText = await window.decryptData(msg.encrypted_message, state.secretKey);
-    displayMessage(
-      'Partner', 
-      decryptedText,
-      msg.encrypted_message,
-      msg.id
-    );
-    
-    processedMessageIds.add(msg.id);
-  }
-
+      displayMessage(
+        'Partner', 
+        decryptedText,
+        msg.encrypted_message,
+        msg.id
+      );
+      
+      processedMessageIds.add(msg.id);
+    }
   } catch (error) {
     console.error('Polling error:', error);
   } finally {
