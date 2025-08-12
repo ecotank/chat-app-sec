@@ -112,42 +112,41 @@ async function sendMessage() {
   const input = document.getElementById('messageInput');
   const message = input.value.trim();
   
-  if (!message) {
-    showError('Pesan tidak boleh kosong');
+  // Validasi lebih ketat
+  if (!message || message.length > 500) {
+    showError('Pesan harus 1-500 karakter');
     return;
   }
 
-  if (!state.currentRoom) {
-    showError('Room ID tidak valid');
+  if (!state.currentRoom || !state.secretKey) {
+    showError('Sesi tidak valid, muat ulang halaman');
     return;
   }
 
-  // Definisikan tempId di awal fungsi
   const tempId = `temp-${Date.now()}`;
-  let shouldRestoreMessage = true;
+  let sendSuccess = false;
 
   try {
-    const encrypted = await window.encryptData(message, state.secretKey);
-    
-    // Tampilkan pesan sebagai outgoing
-    displayMessage('Anda', message, encrypted, tempId);
+    // Tampilkan pesan segera di UI
+    displayMessage('Anda', message, '', tempId, true);
     input.value = '';
     pendingMessages.add(tempId);
-    shouldRestoreMessage = false; // Jangan restore jika sudah berhasil sampai sini
 
-    // Data yang akan dikirim
+    // Enkripsi dan siapkan data
+    const encrypted = await window.encryptData(message, state.secretKey);
     const postData = {
       action: 'send',
       roomId: state.currentRoom,
-      message: encrypted, // Pastikan key ini sesuai dengan yang diharapkan server
-      messageId: tempId, // Beberapa server mengharapkan key messageId
+      message: encrypted,
+      messageId: tempId,
       sender: 'user',
-      timestamp: Date.now()
+      timestamp: new Date().toISOString()
     };
 
+    // Kirim ke server
     const response = await fetch(`${APP_CONFIG.apiBase}/.netlify/functions/chat`, {
       method: 'POST',
-      headers: { 
+      headers: {
         'Content-Type': 'application/json',
         'X-Request-ID': tempId
       },
@@ -156,24 +155,24 @@ async function sendMessage() {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+      throw new Error(errorData.error || `Error ${response.status}`);
     }
 
     const result = await response.json();
-    updateMessageId(tempId, result.messageId || tempId);
-    shouldRestoreMessage = false;
+    updateMessageId(tempId, result.id);
+    sendSuccess = true;
 
   } catch (error) {
-    console.error('Send error:', error);
+    console.error('Send failed:', error);
+    showError(`Gagal mengirim: ${error.message}`);
     
-    // Gunakan tempId yang sudah didefinisikan di awal
+    // Hapus pesan pending jika gagal
     if (tempId) {
       removePendingMessage(tempId);
     }
     
-    showError(error.message || 'Gagal mengirim pesan');
-    
-    if (shouldRestoreMessage && message) {
+    // Kembalikan pesan ke input jika belum ditampilkan di UI
+    if (!sendSuccess && message) {
       input.value = message;
     }
   }
@@ -251,34 +250,27 @@ function setupEventListeners() {
 }
 
 async function processMessages(processedMessageIds) {
-  if (document.hidden) {
-    setTimeout(() => processMessages(processedMessageIds), APP_CONFIG.pollInterval * 3);
+  if (!state.currentRoom || document.hidden) {
+    setTimeout(() => processMessages(processedMessageIds), APP_CONFIG.pollInterval * 2);
     return;
   }
 
   try {
     const messages = await fetchMessages();
-    
-    for (const msg of messages) {
-      // Skip jika:
-      // 1. Sudah diproses
-      // 2. Tidak ada ID
-      // 3. Dari pengguna sendiri
-      if (processedMessageIds.has(msg.id) || 
-          !msg.id ||
-          msg.sender === 'user') {
-        continue;
-      }
+    const newMessages = messages.filter(msg => 
+      msg.id && 
+      !processedMessageIds.has(msg.id) && 
+      msg.sender !== 'user'
+    );
 
-      const decryptedText = await window.decryptData(msg.encrypted_message, state.secretKey);
-      displayMessage(
-        'Partner', 
-        decryptedText,
-        msg.encrypted_message,
-        msg.id
-      );
-      
-      processedMessageIds.add(msg.id);
+    for (const msg of newMessages) {
+      try {
+        const decrypted = await window.decryptData(msg.message, state.secretKey);
+        displayMessage('Partner', decrypted, msg.message, msg.id);
+        processedMessageIds.add(msg.id);
+      } catch (decryptError) {
+        console.error('Decryption failed:', decryptError);
+      }
     }
   } catch (error) {
     console.error('Polling error:', error);
@@ -347,4 +339,46 @@ function showError(message) {
     setTimeout(() => errorEl.style.display = 'none', 5000);
   }
   console.error(message);
+}
+
+// Global error handler
+window.addEventListener('error', (event) => {
+  console.error('Global error:', event.error);
+  showError('Terjadi kesalahan sistem');
+});
+
+// Handle offline state
+window.addEventListener('offline', () => {
+  showError('Koneksi terputus, mencoba menyambung kembali...');
+});
+
+window.addEventListener('online', () => {
+  showError('Koneksi pulih', 'success');
+});
+
+// Debounce untuk pesan masuk
+let processing = false;
+async function processMessages(processedMessageIds) {
+  if (processing) return;
+  processing = true;
+  
+  try {
+    // ... existing code ...
+  } finally {
+    processing = false;
+    setTimeout(() => processMessages(processedMessageIds), APP_CONFIG.pollInterval);
+  }
+}
+
+// Cache untuk pesan yang sudah dienkripsi
+const encryptionCache = new Map();
+async function encryptData(data, key) {
+  const cacheKey = `${data}-${key}`;
+  if (encryptionCache.has(cacheKey)) {
+    return encryptionCache.get(cacheKey);
+  }
+  
+  const encrypted = await window.encryptData(data, key);
+  encryptionCache.set(cacheKey, encrypted);
+  return encrypted;
 }

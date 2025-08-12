@@ -1,7 +1,34 @@
 const { Pool } = require('pg');
+const { v4: uuidv4 } = require('uuid');
+
+// Konfigurasi koneksi database
+const poolConfig = {
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  },
+  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis: 30000,
+  max: 5
+};
+
+// Cache untuk koneksi
+let pool;
+function getPool() {
+  if (!pool) {
+    pool = new Pool(poolConfig);
+    
+    // Handle connection errors
+    pool.on('error', (err) => {
+      console.error('Unexpected database error:', err);
+      pool = null; // Force new pool creation
+    });
+  }
+  return pool;
+}
 
 exports.handler = async (event) => {
-  // Handle CORS
+  // Handle CORS preflight
   if (event.httpMethod === 'OPTIONS') {
     return {
       statusCode: 200,
@@ -18,18 +45,14 @@ exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
-      headers: {
-        'Content-Type': 'application/json',
-        'Allow': 'POST, OPTIONS'
-      },
       body: JSON.stringify({ error: 'Method not allowed' })
     };
   }
 
-  // Parse and validate request
+  // Parse payload
   let payload;
   try {
-    payload = JSON.parse(event.body || '{}');
+    payload = JSON.parse(event.body);
   } catch (err) {
     return {
       statusCode: 400,
@@ -37,6 +60,7 @@ exports.handler = async (event) => {
     };
   }
 
+  // Validate payload
   if (!payload.action || !payload.roomId) {
     return {
       statusCode: 400,
@@ -44,58 +68,67 @@ exports.handler = async (event) => {
     };
   }
 
-  // Initialize database
- const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false,
-    // Untuk development lokal, tambahkan:
-    ca: process.env.NODE_ENV === 'development' 
-      ? require('fs').readFileSync('./path/to/neon-cert.pem').toString()
-      : undefined
-  },
-  connectionTimeoutMillis: 5000
-});
-
   try {
-    // Process actions
+    const db = getPool();
+    
     switch (payload.action) {
       case 'send':
-        if (!payload.encryptedMsg) {
+        if (!payload.message || typeof payload.message !== 'string') {
           return {
             statusCode: 400,
-            body: JSON.stringify({ error: 'Missing message' })
+            body: JSON.stringify({ error: 'Invalid message format' })
           };
         }
 
-        const { rows } = await pool.query(
-  `INSERT INTO chats (room_id, message, custom_id) 
-   VALUES ($1, $2, $3) 
-   RETURNING id, custom_id`,
-  [payload.roomId, payload.encryptedMsg, payload.messageId || null]
-);
+        const insertResult = await db.query(
+          `INSERT INTO chatis (
+            room_id, 
+            message, 
+            sender_id,
+            custom_id
+          ) VALUES ($1, $2, $3, $4)
+          RETURNING id, created_at`,
+          [
+            payload.roomId,
+            payload.message,
+            payload.sender || 'anonymous',
+            payload.messageId || uuidv4()
+          ]
+        );
 
         return {
           statusCode: 200,
-          body: JSON.stringify({ 
-            id: rows[0].id,
-            timestamp: rows[0].created_at
+          body: JSON.stringify({
+            id: insertResult.rows[0].id,
+            timestamp: insertResult.rows[0].created_at
           })
         };
 
       case 'get':
-        const { rows: messages } = await pool.query(
-  `SELECT id, message as encrypted_message, custom_id 
-   FROM chats 
-   WHERE room_id = $1 
-   ORDER BY created_at DESC 
-   LIMIT 100`,
-  [payload.roomId]
-);
+        const queryResult = await db.query(
+          `SELECT 
+            id,
+            message,
+            sender_id as sender,
+            created_at,
+            custom_id
+          FROM chatis
+          WHERE room_id = $1
+          ORDER BY created_at ASC
+          LIMIT 100`,
+          [payload.roomId]
+        );
 
         return {
           statusCode: 200,
-          body: JSON.stringify({ messages })
+          body: JSON.stringify({
+            messages: queryResult.rows.map(row => ({
+              id: row.id,
+              message: row.message,
+              sender: row.sender,
+              timestamp: row.created_at
+            }))
+          })
         };
 
       default:
@@ -108,9 +141,10 @@ exports.handler = async (event) => {
     console.error('Database error:', err);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'Internal server error' })
+      body: JSON.stringify({ 
+        error: 'Database error',
+        details: err.message 
+      })
     };
-  } finally {
-    await pool.end().catch(console.error);
   }
 };
