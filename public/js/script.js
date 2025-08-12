@@ -68,6 +68,7 @@ async function initChatPage() {
     console.error('Init error:', error);
     showError('Gagal memuat chat');
     window.location.href = 'index.html';
+    stopPolling();
   }
 }
 
@@ -204,69 +205,46 @@ function removePendingMessage(tempId) {
 }
 
 async function fetchMessages() {
-  // Validasi state sebelum melanjutkan
-  if (!state.currentRoom || state.isPolling) {
-    console.log('Fetch skipped: no room or already polling');
-    return [];
-  }
+  if (!state.currentRoom) return [];
 
-  state.isPolling = true;
-  let messages = [];
-  
   try {
-    const requestBody = {
-      action: 'get',
-      roomId: state.currentRoom
-    };
-
-    // Tambahkan lastUpdate hanya jika tersedia
-    if (state.lastMessageTimestamp) {
-      requestBody.lastUpdate = state.lastMessageTimestamp;
-    }
-
     const response = await fetch(`${APP_CONFIG.apiBase}/.netlify/functions/chat`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
         'X-Request-ID': `fetch-${Date.now()}`
       },
-      body: JSON.stringify(requestBody)
+      body: JSON.stringify({
+        action: 'get',
+        roomId: state.currentRoom,
+        lastUpdate: state.lastMessageTimestamp || 0
+      })
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      throw new Error(`HTTP ${response.status}`);
     }
 
     const data = await response.json();
     
-    // Validasi respons server
-    if (!data || !Array.isArray(data.messages)) {
-      throw new Error('Invalid server response format');
+    if (!Array.isArray(data.messages)) {
+      throw new Error('Invalid messages format');
     }
 
-    messages = data.messages;
-    
-    // Update timestamp terakhir jika ada pesan baru
-    if (messages.length > 0) {
-      const timestamps = messages
-        .map(m => m.timestamp ? new Date(m.timestamp).getTime() : 0)
-        .filter(t => !isNaN(t));
-      
-      if (timestamps.length > 0) {
-        state.lastMessageTimestamp = Math.max(...timestamps);
-      }
+    // Update timestamp terakhir
+    if (data.messages.length > 0) {
+      state.lastMessageTimestamp = Math.max(
+        ...data.messages
+          .map(m => m.timestamp ? new Date(m.timestamp).getTime() : 0)
+          .filter(t => !isNaN(t))
+      );
     }
 
+    return data.messages;
   } catch (error) {
-    console.error('Fetch error:', error);
-    // Anda bisa menambahkan notifikasi error ke UI jika diperlukan
-    // showError('Gagal memuat pesan terbaru');
-  } finally {
-    state.isPolling = false;
+    console.error('Fetch failed:', error);
+    return [];
   }
-  
-  return messages;
 }
 
 
@@ -290,6 +268,14 @@ function setupEventListeners() {
     localStorage.removeItem(APP_CONFIG.storageKey);
     window.location.href = 'index.html';
   });
+
+   window.addEventListener('unload', stopPolling);
+  document.getElementById('leaveRoom').addEventListener('click', () => {
+    stopPolling();
+    localStorage.removeItem(APP_CONFIG.storageKey);
+    window.location.href = 'index.html';
+  });
+
 }
 
 let isProcessing = false;
@@ -327,25 +313,47 @@ async function processMessages(processedMessageIds) {
   }
 }
 
-function stopPolling() {
-  pollingActive = false;
-}
+// Variabel state untuk polling
+let pollingInterval = null;
+let processedMessageIds = new Set();
 
-// Panggil ini saat meninggalkan halaman chat
-window.addEventListener('beforeunload', stopPolling);
-
+// Fungsi polling yang diperbaiki
 function startPolling() {
-  if (state.pollingInterval) {
-    clearInterval(state.pollingInterval);
+  // Hentikan polling sebelumnya jika ada
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
   }
   
-  const processedMessageIds = new Set();
-  state.pollingInterval = setInterval(() => {
-    if (!isProcessing) {
-      processMessages(processedMessageIds);
+  // Mulai polling baru
+  pollingInterval = setInterval(async () => {
+    if (document.hidden) return; // Jangan polling jika tab tidak aktif
+    
+    try {
+      const messages = await fetchMessages();
+      
+      for (const msg of messages) {
+        if (!processedMessageIds.has(msg.id)) {
+          const decrypted = await window.decryptData(msg.message, state.secretKey);
+          displayMessage('Partner', decrypted, msg.message, msg.id);
+          processedMessageIds.add(msg.id);
+        }
+      }
+    } catch (error) {
+      console.error('Polling error:', error);
     }
   }, APP_CONFIG.pollInterval);
 }
+
+// Fungsi untuk menghentikan polling
+function stopPolling() {
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
+    pollingInterval = null;
+  }
+}
+
+// Panggil stopPolling saat komponen unmount atau halaman ditutup
+window.addEventListener('beforeunload', stopPolling);
 
 function displayMessage(sender, content, encrypted, messageId, isSender = false) {
   const container = document.getElementById('chatMessages');
