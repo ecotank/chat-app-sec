@@ -47,22 +47,26 @@ function disableChatInput() {
 // ======================
 async function initChatPage() {
   try {
-    // Load state dari localStorage
     const savedData = JSON.parse(localStorage.getItem(APP_CONFIG.storageKey)) || {};
     if (!savedData.currentRoomId) {
       throw new Error('Room ID tidak ditemukan');
     }
 
-    state.currentRoom = savedData.currentRoomId;
-    state.secretKey = await deriveSecretKey(state.currentRoom);
+    state = {
+      currentRoom: savedData.currentRoomId,
+      secretKey: await deriveSecretKey(savedData.currentRoomId),
+      isPolling: false,
+      pollingInterval: null,
+      lastMessageTimestamp: 0
+    };
 
-    // Update UI
     document.getElementById('currentRoomId').textContent = state.currentRoom;
     setupEventListeners();
     startPolling();
 
   } catch (error) {
-    console.error('Gagal inisialisasi chat:', error);
+    console.error('Init error:', error);
+    showError('Gagal memuat chat');
     window.location.href = 'index.html';
   }
 }
@@ -200,32 +204,71 @@ function removePendingMessage(tempId) {
 }
 
 async function fetchMessages() {
-  if (!state.currentRoom || state.isPolling) return;
+  // Validasi state sebelum melanjutkan
+  if (!state.currentRoom || state.isPolling) {
+    console.log('Fetch skipped: no room or already polling');
+    return [];
+  }
 
   state.isPolling = true;
+  let messages = [];
   
   try {
+    const requestBody = {
+      action: 'get',
+      roomId: state.currentRoom
+    };
+
+    // Tambahkan lastUpdate hanya jika tersedia
+    if (state.lastMessageTimestamp) {
+      requestBody.lastUpdate = state.lastMessageTimestamp;
+    }
+
     const response = await fetch(`${APP_CONFIG.apiBase}/.netlify/functions/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'get',
-        roomId: state.currentRoom
-      })
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'X-Request-ID': `fetch-${Date.now()}`
+      },
+      body: JSON.stringify(requestBody)
     });
 
-    if (!response.ok) return [];
-    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
     const data = await response.json();
-    return Array.isArray(data.messages) ? data.messages : [];
+    
+    // Validasi respons server
+    if (!data || !Array.isArray(data.messages)) {
+      throw new Error('Invalid server response format');
+    }
+
+    messages = data.messages;
+    
+    // Update timestamp terakhir jika ada pesan baru
+    if (messages.length > 0) {
+      const timestamps = messages
+        .map(m => m.timestamp ? new Date(m.timestamp).getTime() : 0)
+        .filter(t => !isNaN(t));
+      
+      if (timestamps.length > 0) {
+        state.lastMessageTimestamp = Math.max(...timestamps);
+      }
+    }
 
   } catch (error) {
-    console.error('Gagal mengambil pesan:', error);
-    return [];
+    console.error('Fetch error:', error);
+    // Anda bisa menambahkan notifikasi error ke UI jika diperlukan
+    // showError('Gagal memuat pesan terbaru');
   } finally {
     state.isPolling = false;
   }
+  
+  return messages;
 }
+
 
 // ======================
 // FUNGSI BANTU
@@ -249,12 +292,14 @@ function setupEventListeners() {
   });
 }
 
-async function processMessages(processedMessageIds) {
-  if (!state.currentRoom || document.hidden) {
-    setTimeout(() => processMessages(processedMessageIds), APP_CONFIG.pollInterval * 2);
-    return;
-  }
+let isProcessing = false;
+let pollingActive = true;
 
+async function processMessages(processedMessageIds) {
+  if (!pollingActive || isProcessing || !state.currentRoom) return;
+
+  isProcessing = true;
+  
   try {
     const messages = await fetchMessages();
     const newMessages = messages.filter(msg => 
@@ -275,13 +320,31 @@ async function processMessages(processedMessageIds) {
   } catch (error) {
     console.error('Polling error:', error);
   } finally {
-    setTimeout(() => processMessages(processedMessageIds), APP_CONFIG.pollInterval);
+    isProcessing = false;
+    if (pollingActive) {
+      setTimeout(() => processMessages(processedMessageIds), APP_CONFIG.pollInterval);
+    }
   }
 }
 
+function stopPolling() {
+  pollingActive = false;
+}
+
+// Panggil ini saat meninggalkan halaman chat
+window.addEventListener('beforeunload', stopPolling);
+
 function startPolling() {
+  if (state.pollingInterval) {
+    clearInterval(state.pollingInterval);
+  }
+  
   const processedMessageIds = new Set();
-  processMessages(processedMessageIds); // Start the polling loop
+  state.pollingInterval = setInterval(() => {
+    if (!isProcessing) {
+      processMessages(processedMessageIds);
+    }
+  }, APP_CONFIG.pollInterval);
 }
 
 function displayMessage(sender, content, encrypted, messageId, isSender = false) {
@@ -381,4 +444,15 @@ async function encryptData(data, key) {
   const encrypted = await window.encryptData(data, key);
   encryptionCache.set(cacheKey, encrypted);
   return encrypted;
+}
+
+async function fetchMessagesWithRetry(retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fetchMessages();
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+    }
+  }
 }
