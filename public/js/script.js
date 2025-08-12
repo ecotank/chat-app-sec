@@ -94,6 +94,9 @@ async function setupRoom(roomId) {
 // ======================
 // MANAJEMEN PESAN
 // ======================
+// Variabel global untuk tracking pesan
+const pendingMessages = new Set();
+
 async function sendMessage() {
   const input = document.getElementById('messageInput');
   const message = input.value.trim();
@@ -101,12 +104,14 @@ async function sendMessage() {
   if (!message || !state.currentRoom) return;
 
   try {
-    // 1. Enkripsi pesan dan buat ID unik
+    // 1. Enkripsi dan siapkan data
     const encrypted = await window.encryptData(message, state.secretKey);
-    const messageId = Date.now(); // ID unik berbasis timestamp
+    const tempId = `temp-${Date.now()}`; // ID sementara
 
-    // 2. Tampilkan pesan langsung di UI sebagai pengirim "Anda"
-    displayMessage('Anda', message, encrypted, messageId);
+    // 2. Tampilkan pesan sebagai "pending"
+    displayMessage('Anda', message, encrypted, tempId);
+    input.value = '';
+    pendingMessages.add(tempId);
 
     // 3. Kirim ke server
     const response = await fetch(`${APP_CONFIG.apiBase}/.netlify/functions/chat`, {
@@ -115,26 +120,36 @@ async function sendMessage() {
       body: JSON.stringify({
         action: 'send',
         roomId: state.currentRoom,
-        encryptedMsg: encrypted,
-        messageId: messageId // Sertakan ID unik
+        encryptedMsg: encrypted
       })
     });
 
-    if (!response.ok) {
-      // Jika gagal, hapus pesan dari UI
-      document.querySelector(`[data-message-id="${messageId}"]`)?.remove();
-      throw new Error(await response.text());
-    }
+    if (!response.ok) throw new Error(await response.text());
 
-    input.value = '';
+    // 4. Jika sukses, update status pesan
+    const { messageId } = await response.json();
+    updateMessageId(tempId, messageId);
 
   } catch (error) {
-    console.error('Gagal mengirim pesan:', error);
-    showError('Gagal mengirim pesan: ' + error.message);
-    
-    // Restore input jika error
-    input.value = message;
+    console.error('Send failed:', error);
+    showError('Gagal mengirim: ' + error.message);
+    removePendingMessage(tempId);
+    input.value = message; // Kembalikan text ke input
   }
+}
+
+// Fungsi bantuan baru
+function updateMessageId(tempId, newId) {
+  const msgElement = document.querySelector(`[data-message-id="${tempId}"]`);
+  if (msgElement) {
+    msgElement.dataset.messageId = newId;
+    pendingMessages.delete(tempId);
+  }
+}
+
+function removePendingMessage(tempId) {
+  document.querySelector(`[data-message-id="${tempId}"]`)?.remove();
+  pendingMessages.delete(tempId);
 }
 
 async function fetchMessages() {
@@ -187,30 +202,55 @@ function setupEventListeners() {
   });
 }
 
-function startPolling() {
-  const processMessages = async () => {
-    const messages = await fetchMessages();
-    messages.forEach(msg => {
-  if (!document.querySelector(`[data-message-id="${msg.custom_id}"]`)) {
-    displayMessage('Partner', msg.decryptedText, msg.encrypted, msg.custom_id);
+async function processMessages(processedMessageIds) {
+  if (document.hidden) {
+    setTimeout(() => processMessages(processedMessageIds), APP_CONFIG.pollInterval * 3);
+    return;
   }
-});
-    setTimeout(processMessages, APP_CONFIG.pollInterval);
-  };
-  processMessages();
+
+  try {
+    const messages = await fetchMessages();
+    
+    for (const msg of messages) {
+      if (processedMessageIds.has(msg.id) || 
+          !msg.id ||
+          (msg.custom_id && pendingMessages.has(msg.custom_id))) {
+        continue;
+      }
+
+      const decryptedText = await window.decryptData(msg.encrypted_message, state.secretKey);
+      displayMessage(
+        'Partner', 
+        decryptedText,
+        msg.encrypted_message,
+        msg.id
+      );
+      
+      processedMessageIds.add(msg.id);
+    }
+  } catch (error) {
+    console.error('Polling error:', error);
+  } finally {
+    setTimeout(() => processMessages(processedMessageIds), APP_CONFIG.pollInterval);
+  }
 }
 
-function displayMessage(sender, content, encrypted, messageId) {
+function startPolling() {
+  const processedMessageIds = new Set();
+  processMessages(processedMessageIds); // Start the polling loop
+}
+
+function displayMessage(sender, content, encrypted, messageId, isPending = false) {
   const container = document.getElementById('chatMessages');
   if (!container || document.querySelector(`[data-message-id="${messageId}"]`)) return;
-  
+
   const messageEl = document.createElement('div');
+  messageEl.className = `message ${sender === 'Anda' ? 'sent' : 'received'} ${isPending ? 'pending' : ''}`;
   messageEl.dataset.messageId = messageId;
-  messageEl.className = `message ${sender === 'Anda' ? 'sent' : 'received'}`;
   messageEl.innerHTML = `
     <div class="sender">${sender}</div>
     <div class="text">${content}</div>
-    <div class="encrypted">🔒 ${encrypted.substring(0, 20)}...</div>
+    ${encrypted ? `<div class="encrypted">🔒 ${encrypted.substring(0, 20)}...</div>` : ''}
   `;
   container.appendChild(messageEl);
   container.scrollTop = container.scrollHeight;
