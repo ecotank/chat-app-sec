@@ -4,8 +4,6 @@
 const APP_CONFIG = {
   storageKey: 'chatAppData',
   pollInterval: 2000,
-  // Pakai origin saat ini (Netlify/Vercel) agar tidak kena CORS.
-  // Saat dev pakai Netlify CLI: http://localhost:8888
   apiBase:
     (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
       ? 'http://localhost:8888'
@@ -17,9 +15,10 @@ const APP_CONFIG = {
 // ======================
 const state = {
   currentRoom: null,
-  secretKey: null, // CryptoKey
+  secretKey: null,
   lastMessageTimestamp: 0,
-  isPolling: false
+  isPolling: false,
+  senderId: null
 };
 
 // ======================
@@ -40,6 +39,9 @@ function randomRoomId(len = 8) {
   let out = '';
   for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
   return out;
+}
+function randomSenderId() {
+  return 'user-' + Math.random().toString(36).slice(2, 10);
 }
 
 // ======================
@@ -106,6 +108,15 @@ const messagePoller = new PollingService();
 // INISIALISASI
 // ======================
 document.addEventListener('DOMContentLoaded', () => {
+  const saved = loadLocal();
+
+  // Pastikan senderId unik untuk browser ini
+  if (!saved.senderId) {
+    saved.senderId = randomSenderId();
+    saveLocal(saved);
+  }
+  state.senderId = saved.senderId;
+
   if (document.body.id === 'chat-page') {
     initChatPage();
   } else {
@@ -123,6 +134,9 @@ async function initChatPage() {
 
     document.getElementById('currentRoomId').textContent = state.currentRoom;
     setupEventListeners();
+
+    // Awal polling → ambil semua pesan
+    state.lastMessageTimestamp = 0;
 
     // Mulai polling
     messagePoller.start(
@@ -172,8 +186,8 @@ function initHomePage() {
 async function handleNewMessages(messages) {
   for (const msg of messages) {
     try {
-      // Skip jika dari diri sendiri (di-tag 'user')
-      if (msg.sender === 'user') continue;
+      // Skip hanya jika pengirim adalah browser ini
+      if (msg.sender === state.senderId) continue;
       const decrypted = await window.decryptData(msg.message, state.secretKey);
       displayMessage('Partner', decrypted ?? '[gagal dekripsi]', msg.message, msg.id);
       messagePoller.processedIds.add(msg.id);
@@ -209,7 +223,7 @@ async function sendMessage() {
         roomId: state.currentRoom,
         message: encrypted,
         messageId: tempId,
-        sender: 'user'
+        sender: state.senderId
       })
     });
 
@@ -317,7 +331,6 @@ function showErrorInline(message) {
   alert(message);
 }
 
-// Cleanup saat window ditutup
 window.addEventListener('beforeunload', () => {
   messagePoller.stop();
 });
