@@ -1,21 +1,15 @@
-// Cek apakah komponen UI ada
-document.addEventListener('DOMContentLoaded', () => {
-  console.log('Cek elemen UI:');
-  console.log('Send Button:', document.getElementById('sendButton'));
-  console.log('Message Input:', document.getElementById('messageInput'));
-  console.log('Chat Container:', document.getElementById('chatMessages'));
-});
-
-
 // ======================
 // KONFIGURASI APLIKASI
 // ======================
 const APP_CONFIG = {
   storageKey: 'chatAppData',
   pollInterval: 2000,
-  apiBase: window.location.hostname === 'localhost' 
-    ? 'http://localhost:8888' 
-    : 'https://your-netlify-site.netlify.app'
+  // Pakai origin saat ini (Netlify/Vercel) agar tidak kena CORS.
+  // Saat dev pakai Netlify CLI: http://localhost:8888
+  apiBase:
+    (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+      ? 'http://localhost:8888'
+      : ''
 };
 
 // ======================
@@ -23,10 +17,30 @@ const APP_CONFIG = {
 // ======================
 const state = {
   currentRoom: null,
-  secretKey: null,
+  secretKey: null, // CryptoKey
   lastMessageTimestamp: 0,
   isPolling: false
 };
+
+// ======================
+// UTIL
+// ======================
+function saveLocal(data) {
+  localStorage.setItem(APP_CONFIG.storageKey, JSON.stringify(data));
+}
+function loadLocal() {
+  try {
+    return JSON.parse(localStorage.getItem(APP_CONFIG.storageKey)) || {};
+  } catch {
+    return {};
+  }
+}
+function randomRoomId(len = 8) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
+}
 
 // ======================
 // MANAJEMEN POLLING
@@ -41,7 +55,6 @@ class PollingService {
     this.stop();
     this.intervalId = setInterval(async () => {
       if (document.hidden || state.isPolling) return;
-      
       state.isPolling = true;
       try {
         const messages = await this.fetchMessages(roomId);
@@ -58,7 +71,7 @@ class PollingService {
     const response = await fetch(`${APP_CONFIG.apiBase}/.netlify/functions/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
+      body: JSON.stringify({
         action: 'get',
         roomId,
         lastUpdate: state.lastMessageTimestamp
@@ -66,7 +79,6 @@ class PollingService {
     });
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    
     const { messages } = await response.json();
     if (!Array.isArray(messages)) throw new Error('Invalid response format');
 
@@ -91,7 +103,7 @@ class PollingService {
 const messagePoller = new PollingService();
 
 // ======================
-// FUNGSI UTAMA
+// INISIALISASI
 // ======================
 document.addEventListener('DOMContentLoaded', () => {
   if (document.body.id === 'chat-page') {
@@ -103,31 +115,55 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function initChatPage() {
   try {
-    const savedData = JSON.parse(localStorage.getItem(APP_CONFIG.storageKey)) || {};
-    if (!savedData.currentRoomId) throw new Error('Room ID tidak ditemukan');
+    const saved = loadLocal();
+    if (!saved.currentRoomId) throw new Error('Room ID tidak ditemukan');
 
-    state.currentRoom = savedData.currentRoomId;
+    state.currentRoom = saved.currentRoomId;
     state.secretKey = await deriveSecretKey(state.currentRoom);
 
     document.getElementById('currentRoomId').textContent = state.currentRoom;
     setupEventListeners();
-    
+
+    // Mulai polling
     messagePoller.start(
       state.currentRoom,
       handleNewMessages,
       APP_CONFIG.pollInterval
     );
-
   } catch (error) {
     console.error('Init error:', error);
     showError('Gagal memulai chat');
-    window.location.href = 'index.html';
+    location.href = 'index.html';
   }
 }
 
 function initHomePage() {
-  document.getElementById('joinRoom').addEventListener('click', joinRoom);
-  document.getElementById('createRoom').addEventListener('click', createRoom);
+  const joinBtn = document.getElementById('joinRoom');
+  const createBtn = document.getElementById('createRoom');
+  const roomInput = document.getElementById('roomId');
+
+  if (joinBtn) {
+    joinBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const room = (roomInput?.value || '').trim();
+      if (!room) return showErrorInline('Masukkan Room ID terlebih dahulu');
+      const saved = loadLocal();
+      saved.currentRoomId = room;
+      saveLocal(saved);
+      location.href = 'room.html';
+    });
+  }
+
+  if (createBtn) {
+    createBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const room = randomRoomId();
+      const saved = loadLocal();
+      saved.currentRoomId = room;
+      saveLocal(saved);
+      location.href = 'room.html';
+    });
+  }
 }
 
 // ======================
@@ -136,8 +172,10 @@ function initHomePage() {
 async function handleNewMessages(messages) {
   for (const msg of messages) {
     try {
+      // Skip jika dari diri sendiri (di-tag 'user')
+      if (msg.sender === 'user') continue;
       const decrypted = await window.decryptData(msg.message, state.secretKey);
-      displayMessage('Partner', decrypted, msg.message, msg.id);
+      displayMessage('Partner', decrypted ?? '[gagal dekripsi]', msg.message, msg.id);
       messagePoller.processedIds.add(msg.id);
     } catch (error) {
       console.error('Message processing error:', error);
@@ -145,37 +183,24 @@ async function handleNewMessages(messages) {
   }
 }
 
-// 1. Fungsi utama pengiriman pesan (tetap menggunakan sendMessage seperti di kode asli Anda)
 async function sendMessage() {
-  console.log('[Debug] Memulai proses pengiriman...');
-  
   const input = document.getElementById('messageInput');
   const sendButton = document.getElementById('sendButton');
-  
-  // Validasi
-  if (!input || !sendButton) {
-    console.error('Elemen tidak ditemukan');
-    return;
-  }
 
+  if (!input || !sendButton) return;
   const message = input.value.trim();
-  if (!message) {
-    showError('Pesan tidak boleh kosong');
-    return;
-  }
+  if (!message) return showError('Pesan tidak boleh kosong');
 
-  // Tampilkan loading state
+  // Loading state
   sendButton.disabled = true;
   sendButton.textContent = 'Mengirim...';
 
   try {
-    // Enkripsi dan tampilkan pesan
     const encrypted = await window.encryptData(message, state.secretKey);
     const tempId = `temp-${Date.now()}`;
     displayMessage('Anda', message, encrypted, tempId);
     input.value = '';
 
-    // Kirim ke server
     const response = await fetch(`${APP_CONFIG.apiBase}/.netlify/functions/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -188,62 +213,47 @@ async function sendMessage() {
       })
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const result = await response.json();
     updateMessageId(tempId, result.id);
-
   } catch (error) {
     console.error('Send error:', error);
     showError(`Gagal mengirim: ${error.message}`);
-    input.value = message; // Kembalikan pesan jika gagal
+    input.value = message;
   } finally {
     sendButton.disabled = false;
     sendButton.textContent = 'Kirim';
   }
 }
 
-// 2. Fungsi untuk menerima pesan baru (handleNewMessages yang sudah ada di kode Anda)
-async function handleNewMessages(messages) {
-  console.log('[Debug] Memproses pesan baru:', messages.length);
-  
-  for (const msg of messages) {
-    try {
-      // Skip jika pesan sudah diproses atau dari diri sendiri
-      if (messagePoller.processedIds.has(msg.id)) continue;
-      if (msg.sender === 'user') continue;
-
-      const decrypted = await window.decryptData(msg.message, state.secretKey);
-      displayMessage('Partner', decrypted, msg.message, msg.id);
-      messagePoller.processedIds.add(msg.id);
-
-    } catch (error) {
-      console.error('Error proses pesan:', error);
-    }
-  }
-}
-
 // ======================
-// FUNGSI BANTU
+// FUNGSI BANTU UI
 // ======================
 function setupEventListeners() {
   const sendButton = document.getElementById('sendButton');
   const messageInput = document.getElementById('messageInput');
+  const leaveButton = document.getElementById('leaveRoom');
 
-  // Handler klik tombol
   sendButton?.addEventListener('click', (e) => {
     e.preventDefault();
-    sendMessage(); // Memanggil fungsi utama yang sudah ada
+    sendMessage();
   });
 
-  // Handler tekan Enter
   messageInput?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      sendMessage(); // Memanggil fungsi utama yang sudah ada
+      sendMessage();
     }
+  });
+
+  leaveButton?.addEventListener('click', (e) => {
+    e.preventDefault();
+    const saved = loadLocal();
+    delete saved.currentRoomId;
+    saveLocal(saved);
+    // Hentikan polling dan redirect
+    messagePoller.stop();
+    location.href = 'index.html';
   });
 }
 
@@ -251,25 +261,24 @@ function displayMessage(sender, content, encrypted, messageId) {
   const container = document.getElementById('chatMessages');
   if (!container) return;
 
-  const messageEl = document.createElement('div');
-  messageEl.className = `message ${sender === 'Anda' ? 'sent' : 'received'}`;
-  messageEl.dataset.messageId = messageId;
-  messageEl.innerHTML = `
+  const el = document.createElement('div');
+  el.className = `message ${sender === 'Anda' ? 'sent' : 'received'}`;
+  el.dataset.messageId = messageId;
+  el.innerHTML = `
     <div class="sender">${sender}</div>
-    <div class="content">${content}</div>
-    ${encrypted ? `<div class="meta">🔒 ${encrypted.substring(0, 10)}...</div>` : ''}
+    <div class="content">
+      <div class="text">${content ?? ''}</div>
+      ${encrypted ? `<div class="encrypted">🔒 ${String(encrypted).slice(0, 20)}...</div>` : ''}
+    </div>
   `;
-  container.appendChild(messageEl);
+
+  container.appendChild(el);
   container.scrollTop = container.scrollHeight;
 }
 
 function updateMessageId(tempId, newId) {
-  const msgElement = document.querySelector(`[data-message-id="${tempId}"]`);
-  if (msgElement) msgElement.dataset.messageId = newId;
-}
-
-function removePendingMessage(messageId) {
-  document.querySelector(`[data-message-id="${messageId}"]`)?.remove();
+  const el = document.querySelector(`[data-message-id="${tempId}"]`);
+  if (el) el.dataset.messageId = newId;
 }
 
 async function deriveSecretKey(roomId) {
@@ -281,7 +290,6 @@ async function deriveSecretKey(roomId) {
     false,
     ['deriveKey']
   );
-  
   return crypto.subtle.deriveKey(
     {
       name: 'PBKDF2',
@@ -299,14 +307,14 @@ async function deriveSecretKey(roomId) {
 function showError(message, type = 'error') {
   const errorEl = document.getElementById('errorAlert');
   if (!errorEl) return;
-  
   errorEl.textContent = message;
-  errorEl.className = `alert ${type}`;
+  errorEl.className = `error-message ${type}`;
   errorEl.style.display = 'block';
-  
-  setTimeout(() => {
-    errorEl.style.display = 'none';
-  }, 5000);
+  setTimeout(() => (errorEl.style.display = 'none'), 5000);
+}
+
+function showErrorInline(message) {
+  alert(message);
 }
 
 // Cleanup saat window ditutup
