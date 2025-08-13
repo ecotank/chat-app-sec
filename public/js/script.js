@@ -1,3 +1,12 @@
+// Cek apakah komponen UI ada
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('Cek elemen UI:');
+  console.log('Send Button:', document.getElementById('sendButton'));
+  console.log('Message Input:', document.getElementById('messageInput'));
+  console.log('Chat Container:', document.getElementById('chatMessages'));
+});
+
+
 // ======================
 // KONFIGURASI APLIKASI
 // ======================
@@ -136,20 +145,37 @@ async function handleNewMessages(messages) {
   }
 }
 
+// 1. Fungsi utama pengiriman pesan (tetap menggunakan sendMessage seperti di kode asli Anda)
 async function sendMessage() {
+  console.log('[Debug] Memulai proses pengiriman...');
+  
   const input = document.getElementById('messageInput');
-  const message = input.value.trim();
+  const sendButton = document.getElementById('sendButton');
   
-  if (!message) return showError('Pesan tidak boleh kosong');
-  if (!state.currentRoom) return showError('Room ID tidak valid');
+  // Validasi
+  if (!input || !sendButton) {
+    console.error('Elemen tidak ditemukan');
+    return;
+  }
 
-  const tempId = `temp-${Date.now()}`;
-  
+  const message = input.value.trim();
+  if (!message) {
+    showError('Pesan tidak boleh kosong');
+    return;
+  }
+
+  // Tampilkan loading state
+  sendButton.disabled = true;
+  sendButton.textContent = 'Mengirim...';
+
   try {
+    // Enkripsi dan tampilkan pesan
     const encrypted = await window.encryptData(message, state.secretKey);
+    const tempId = `temp-${Date.now()}`;
     displayMessage('Anda', message, encrypted, tempId);
     input.value = '';
 
+    // Kirim ke server
     const response = await fetch(`${APP_CONFIG.apiBase}/.netlify/functions/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -162,16 +188,40 @@ async function sendMessage() {
       })
     });
 
-    if (!response.ok) throw new Error(await response.text());
-    
-    const { id } = await response.json();
-    updateMessageId(tempId, id);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const result = await response.json();
+    updateMessageId(tempId, result.id);
 
   } catch (error) {
     console.error('Send error:', error);
-    showError('Gagal mengirim pesan');
-    input.value = message;
-    removePendingMessage(tempId);
+    showError(`Gagal mengirim: ${error.message}`);
+    input.value = message; // Kembalikan pesan jika gagal
+  } finally {
+    sendButton.disabled = false;
+    sendButton.textContent = 'Kirim';
+  }
+}
+
+// 2. Fungsi untuk menerima pesan baru (handleNewMessages yang sudah ada di kode Anda)
+async function handleNewMessages(messages) {
+  console.log('[Debug] Memproses pesan baru:', messages.length);
+  
+  for (const msg of messages) {
+    try {
+      // Skip jika pesan sudah diproses atau dari diri sendiri
+      if (messagePoller.processedIds.has(msg.id)) continue;
+      if (msg.sender === 'user') continue;
+
+      const decrypted = await window.decryptData(msg.message, state.secretKey);
+      displayMessage('Partner', decrypted, msg.message, msg.id);
+      messagePoller.processedIds.add(msg.id);
+
+    } catch (error) {
+      console.error('Error proses pesan:', error);
+    }
   }
 }
 
@@ -181,17 +231,19 @@ async function sendMessage() {
 function setupEventListeners() {
   const sendButton = document.getElementById('sendButton');
   const messageInput = document.getElementById('messageInput');
-  const leaveButton = document.getElementById('leaveRoom');
 
-  sendButton?.addEventListener('click', sendMessage);
-  messageInput?.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') sendMessage();
+  // Handler klik tombol
+  sendButton?.addEventListener('click', (e) => {
+    e.preventDefault();
+    sendMessage(); // Memanggil fungsi utama yang sudah ada
   });
-  
-  leaveButton?.addEventListener('click', () => {
-    messagePoller.stop();
-    localStorage.removeItem(APP_CONFIG.storageKey);
-    window.location.href = 'index.html';
+
+  // Handler tekan Enter
+  messageInput?.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      sendMessage(); // Memanggil fungsi utama yang sudah ada
+    }
   });
 }
 
