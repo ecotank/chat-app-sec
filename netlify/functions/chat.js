@@ -27,11 +27,11 @@ async function ensureTableExists(client) {
   `);
 }
 
-// Auto-delete pesan lebih lama dari 1 hari
+// Auto-delete pesan lebih lama dari 7 hari (ubah sesuai kebutuhan)
 async function autoDeleteOldMessages(client) {
   await client.query(`
     DELETE FROM messages
-    WHERE created_at < NOW() - INTERVAL '1 day'
+    WHERE created_at < NOW() - INTERVAL '7 days'
   `);
 }
 
@@ -88,14 +88,13 @@ exports.handler = async (event) => {
             body: JSON.stringify({ error: 'Missing message' })
           };
         }
-
         const insertResult = await client.query(
           `INSERT INTO messages (room_id, content, sender_id, custom_id)
            VALUES ($1, $2, $3, $4)
            RETURNING id, created_at`,
           [
             payload.roomId,
-            payload.message,
+            payload.message,         // string JSON terenkripsi (bisa teks / media)
             payload.sender || 'anonymous',
             payload.messageId || uuidv4()
           ]
@@ -118,9 +117,9 @@ exports.handler = async (event) => {
            FROM messages
            WHERE room_id = $1
              AND deleted = FALSE
-             AND created_at > to_timestamp($2/1000.0)
+             AND GREATEST(EXTRACT(EPOCH FROM created_at), EXTRACT(EPOCH FROM updated_at)) * 1000 > $2
            ORDER BY created_at ASC
-           LIMIT 200`,
+           LIMIT 500`,
           [payload.roomId, last]
         );
 
@@ -129,7 +128,7 @@ exports.handler = async (event) => {
            FROM messages
            WHERE room_id = $1
              AND deleted = TRUE
-             AND updated_at > to_timestamp($2/1000.0)
+             AND EXTRACT(EPOCH FROM updated_at) * 1000 > $2
            ORDER BY updated_at ASC
            LIMIT 500`,
           [payload.roomId, last]
@@ -150,7 +149,6 @@ exports.handler = async (event) => {
             body: JSON.stringify({ error: 'Missing messageIds' })
           };
         }
-
         await client.query(
           `UPDATE messages
              SET deleted = TRUE, updated_at = NOW()
